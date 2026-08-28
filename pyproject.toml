@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "payzum"
+version = "0.0.1"
+description = "Official Python SDK for the Payzum crypto payment API — accept stablecoin and crypto payments, verify IPN webhooks."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [{ name = "Payzum" }]
+keywords = [
+  "payzum",
+  "payments",
+  "crypto",
+  "stablecoin",
+  "usdt",
+  "usdc",
+  "payment-gateway",
+  "bitcoin",
+  "ethereum",
+]
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Office/Business :: Financial",
+]
+
+[project.urls]
+Homepage = "https://merchant.payzum.com"
+Documentation = "https://merchant.payzum.com/docs"
+Source = "https://github.com/payzumhq/payzum-python"
+Issues = "https://github.com/payzumhq/payzum-python/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/payzum"]
