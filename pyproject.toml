@@ -32,8 +32,8 @@ classifiers = [
 [project.urls]
 Homepage = "https://merchant.payzum.com"
 Documentation = "https://merchant.payzum.com/docs"
-Source = "https://github.com/payzumhq/payzum-python"
-Issues = "https://github.com/payzumhq/payzum-python/issues"
+Source = "https://github.com/payzum-dev/payzum-python"
+Issues = "https://github.com/payzum-dev/payzum-python/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/payzum"]
