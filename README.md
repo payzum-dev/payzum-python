@@ -2,27 +2,16 @@
 
 Accept crypto and stablecoin payments (USDC/USDT, multi-chain) with
 [Payzum](https://merchant.payzum.com). Non-custodial — funds settle to your own
-wallet.
-
-- **Zero runtime dependencies.** Standard library only: `urllib` transport,
-  `hmac` verification, `decimal` money.
-- **Money never touches a float.** Responses decode with
-  `json.loads(parse_float=Decimal)`, so `0.123456789012345678` arrives with
-  every digit; outbound amounts are emitted as exact JSON numbers without ever
-  being a `float`.
-- **Webhook verification you cannot get wrong.** The `Verifier` owns the fixed
-  signature headers for the three webhook families (they are *not*
-  interchangeable), verifies over the RAW bytes in constant time, and enforces
-  a 10-minute replay window on the signed timestamp.
-- **A retry policy that will not double-charge.** Invoice creation is never
-  retried without an `Idempotency-Key`; with one, the first retry still waits
-  out the API's ~60 s idempotency consistency window.
+wallet. Zero runtime dependencies.
 
 ```
 pip install payzum
 ```
 
-## Create an invoice
+You need two values from your [Payzum dashboard](https://merchant.payzum.com):
+an **API key** and a **webhook secret**.
+
+## Charge a customer
 
 ```python
 from payzum import Payzum
@@ -30,24 +19,27 @@ from payzum import Payzum
 payzum = Payzum("your-api-key")             # Payzum.sandbox(...) for staging
 
 invoice = payzum.payments.create(
-    price_amount="49.99",                   # a string (or Decimal) — never a float
+    price_amount="49.99",                   # a string or Decimal — never a float
     price_currency="usd",
-    pay_currency="all",                     # the buyer picks the coin on the hosted checkout
+    pay_currency="all",                     # the buyer picks the coin on the checkout page
     order_id="ORDER-12345",
     ipn_callback_url="https://your-shop.example/payzum/ipn",
-    idempotency_key="ORDER-12345",          # makes a transport retry safe
+    idempotency_key="ORDER-12345",          # lets the SDK retry safely on network hiccups
 )
-redirect(invoice["invoice_url"])
+redirect(invoice["invoice_url"])            # send the buyer to the hosted checkout
 ```
 
-`pay_currency="all"` defers the coin choice to the buyer, limited to the
-allowlist configured in your Payzum dashboard (Merchants → Settings → Accepted
-tokens) and enforced server-side.
+That's the whole flow: create, redirect, and wait for the webhook. Which coins
+the buyer can pick is configured in your dashboard, not in code.
 
-## Verify an IPN
+## Get notified when it's paid
+
+Payzum POSTs a signed webhook (IPN) to your `ipn_callback_url`. Hand the SDK
+the **raw request body** and the headers — it finds the right header, checks
+the signature and rejects replays, all by itself:
 
 ```python
-from payzum import Payzum, SignatureError, PaymentStatus
+from payzum import Payzum, PaymentStatus, SignatureError
 
 try:
     data = Payzum.webhooks(webhook_secret).verify_payment_ipn(
@@ -58,31 +50,42 @@ except SignatureError:
     return "bad signature", 401
 
 status = PaymentStatus.from_merchant(data["payment_status"])
-if status.is_paid():                        # finished — covers overpayment too
-    fulfil_order(data["order_id"])
+if status.is_paid():
+    fulfil_order(data["order_id"])          # only fulfil on is_paid()
 ```
 
-The verifier reads the fixed `x-nowpayments-sig` header itself
-(case-insensitively, WSGI `HTTP_` form included). Deduplicate deliveries on
-`verifier.event_id(headers)` — retries reuse it.
+Deliveries can arrive more than once — deduplicate on
+`verifier.event_id(request.headers)` if a repeat must be a no-op on your side.
 
-## The status vocabulary
+## Statuses
 
-The merchant surface emits exactly five statuses: `waiting`,
-`partially_paid`, `finished`, `expired`, `failed`. `PaymentStatus` models
-those and raises on anything else — a sixth value would be a contract change
-that should break loudly, not be guessed at. `from_buyer()` maps the buyer
-surface's six values onto the same enum.
+A payment is always in one of five states: `waiting`, `partially_paid`,
+`finished`, `expired`, `failed`. Everything you need is on the enum:
 
-## Testing
+- `status.is_paid()` — safe to fulfil (covers overpayment too).
+- `status.is_terminal()` — nothing further will happen.
+- `PaymentStatus.from_merchant(...)` raises on anything unexpected, so a
+  surprise value can never be mistaken for "paid".
 
-The suite runs the shared webhook-signature corpus every Payzum SDK verifies:
+## Errors
 
-```
-python -m unittest discover -s tests
-```
+Everything raises a typed exception: `ApiError` (with `.error_code`, e.g.
+`AMOUNT_BELOW_MINIMUM`, to branch on), `SignatureError` for webhooks,
+`TransportError` for network failures, `PayzumError` for local validation.
+
+Transient failures are retried for you, honouring the server's back-off hints.
+A create is **only** retried when you pass an `idempotency_key`, and then in a
+way that cannot double-charge.
+
+## Amounts are exact
+
+Amounts go in as `str`/`Decimal` and come back as `Decimal` — the SDK never
+converts money through a `float` in either direction.
+
+## Testing your integration
 
 `Payzum(api_key, transport=...)` accepts any object with the
-`Transport.send()` shape, so the client is testable without sockets.
+`Transport.send()` shape, so you can test without touching the network. The
+SDK's own suite runs with `python -m unittest discover -s tests`.
 
 Docs: <https://merchant.payzum.com/docs> · llms: <https://merchant.payzum.com/llms.txt>
