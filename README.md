@@ -1,71 +1,88 @@
-# payzum (Python)
+# payzum — official Python SDK
 
-Official SDK for [Payzum](https://payzum.com) — accept stablecoin and crypto
-payments, and verify IPN webhooks.
+Accept crypto and stablecoin payments (USDC/USDT, multi-chain) with
+[Payzum](https://merchant.payzum.com). Non-custodial — funds settle to your own
+wallet.
+
+- **Zero runtime dependencies.** Standard library only: `urllib` transport,
+  `hmac` verification, `decimal` money.
+- **Money never touches a float.** Responses decode with
+  `json.loads(parse_float=Decimal)`, so `0.123456789012345678` arrives with
+  every digit; outbound amounts are emitted as exact JSON numbers without ever
+  being a `float`.
+- **Webhook verification you cannot get wrong.** The `Verifier` owns the fixed
+  signature headers for the three webhook families (they are *not*
+  interchangeable), verifies over the RAW bytes in constant time, and enforces
+  a 10-minute replay window on the signed timestamp.
+- **A retry policy that will not double-charge.** Invoice creation is never
+  retried without an `Idempotency-Key`; with one, the first retry still waits
+  out the API's ~60 s idempotency consistency window.
 
 ```
 pip install payzum
 ```
 
-> ## ⚠️ This is a `0.0.1` placeholder
->
-> It reserves the package name. **It contains no client yet.** A half-working
-> payment client is worse than none, so this release deliberately ships only a
-> version constant and the base URLs.
->
-> Until v1 lands, integrate against the [REST API](https://merchant.payzum.com/docs)
-> directly. If you do, read the webhook section below first — it is where
-> integrations most often go wrong.
+## Create an invoice
 
-## What v1 will contain
+```python
+from payzum import Payzum
 
-- **Payments:** create, read (by payment id *or* your own `order_id`) and list
-  invoices.
-- **Buyer status:** the public, unauthenticated invoice status endpoint.
-- **Rates:** `estimate` and `min-amount`, so you can reject an under-minimum
-  amount before creating an invoice instead of getting `AMOUNT_BELOW_MINIMUM`.
-- **Currencies:** the detailed catalogue, which tells you the chain of each
-  asset — the flat list cannot, since `eth` appears once per chain.
-- **Webhooks:** three separate verifiers, one per signature scheme, each with
-  its header and algorithm fixed internally.
-- **Typed errors:** all 16 API error codes, each classified as retryable or not.
-- **Decimal-safe amounts:** no `float` ever crosses the public boundary.
+payzum = Payzum("your-api-key")             # Payzum.sandbox(...) for staging
 
-Mass payouts (UTXO and EVM) are planned for v1.1.
+invoice = payzum.payments.create(
+    price_amount="49.99",                   # a string (or Decimal) — never a float
+    price_currency="usd",
+    pay_currency="all",                     # the buyer picks the coin on the hosted checkout
+    order_id="ORDER-12345",
+    ipn_callback_url="https://your-shop.example/payzum/ipn",
+    idempotency_key="ORDER-12345",          # makes a transport retry safe
+)
+redirect(invoice["invoice_url"])
+```
 
-## The webhook trap, if you are integrating by hand today
+`pay_currency="all"` defers the coin choice to the buyer, limited to the
+allowlist configured in your Payzum dashboard (Merchants → Settings → Accepted
+tokens) and enforced server-side.
 
-Payzum sends **three** kinds of signed webhook and none of them is
-interchangeable:
+## Verify an IPN
 
-| Webhook | Algorithm | Header |
-|---|---|---|
-| Payment IPN (default) | HMAC-SHA-512 | `x-nowpayments-sig` |
-| Payment IPN, CoinPayments-mode merchants | HMAC-SHA-512 over a form-encoded body | `HMAC` |
-| Mass payout | HMAC-SHA-256 | `X-Payzum-Signature` |
+```python
+from payzum import Payzum, SignatureError, PaymentStatus
 
-The payment IPN header is named after Payzum's NowPayments-compatible dialect,
-which lets an existing NowPayments integration point at Payzum without code
-changes. Using `X-Payzum-Signature` for a payment IPN is the single most common
-bug with this API — the signature never verifies, deliveries get a 401, and
-orders are silently never fulfilled.
+try:
+    data = Payzum.webhooks(webhook_secret).verify_payment_ipn(
+        request.get_data(),                 # RAW bytes, before any parsing
+        request.headers,
+    )
+except SignatureError:
+    return "bad signature", 401
 
-Always verify against the **raw request bytes, before parsing the JSON**, and
-compare in constant time. Header lookup is case-insensitive.
+status = PaymentStatus.from_merchant(data["payment_status"])
+if status.is_paid():                        # finished — covers overpayment too
+    fulfil_order(data["order_id"])
+```
 
-## Requirements
+The verifier reads the fixed `x-nowpayments-sig` header itself
+(case-insensitively, WSGI `HTTP_` form included). Deduplicate deliveries on
+`verifier.event_id(headers)` — retries reuse it.
 
-Python 3.9 or newer.
+## The status vocabulary
 
-## Links
+The merchant surface emits exactly five statuses: `waiting`,
+`partially_paid`, `finished`, `expired`, `failed`. `PaymentStatus` models
+those and raises on anything else — a sixth value would be a contract change
+that should break loudly, not be guessed at. `from_buyer()` maps the buyer
+surface's six values onto the same enum.
 
-- Documentation: <https://merchant.payzum.com/docs>
-- Machine-readable reference for AI agents: <https://merchant.payzum.com/llms.txt>
-- Sandbox: <https://staging.payzum.com>
+## Testing
 
-Note that `api.payzum.com` does **not** serve the API. Use
-`merchant.payzum.com`.
+The suite runs the shared webhook-signature corpus every Payzum SDK verifies:
 
-## License
+```
+python -m unittest discover -s tests
+```
 
-MIT — see [LICENSE](LICENSE).
+`Payzum(api_key, transport=...)` accepts any object with the
+`Transport.send()` shape, so the client is testable without sockets.
+
+Docs: <https://merchant.payzum.com/docs> · llms: <https://merchant.payzum.com/llms.txt>

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "payzum"
-version = "0.0.1"
+version = "0.1.0"
 description = "Official Python SDK for the Payzum crypto payment API — accept stablecoin and crypto payments, verify IPN webhooks."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -22,7 +22,7 @@ keywords = [
   "ethereum",
 ]
 classifiers = [
-  "Development Status :: 1 - Planning",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
